@@ -317,7 +317,7 @@ function renderInvoices() {
     <article class="entry invoiceCard">
       <div>
         <strong>${escapeHtml(inv.number)} · ${escapeHtml(inv.customerName)}</strong>
-        <div class="entryMeta">${inv.type === 'manual' ? `${(inv.lineItems || []).length} manual lines` : `${inv.entryCount} entries`} · ${Number(inv.totalHours || 0).toFixed(2)}h · ${fmtMoney(inv.totalAmount)} · <span class="billBadge ${inv.status === 'paid' ? 'paid' : 'billed'}">${inv.status === 'paid' ? 'Paid' : 'Unpaid'}</span></div>
+        <div class="entryMeta">${inv.type === 'manual' ? `${(inv.lineItems || []).length} manual lines` : `${inv.entryCount} entries`} · ${Number(inv.totalHours || 0).toFixed(2)} billable h · ${fmtMoney(inv.totalAmount)} · <span class="billBadge ${inv.status === 'paid' ? 'paid' : 'billed'}">${inv.status === 'paid' ? 'Paid' : 'Unpaid'}</span></div>
         <div class="entryMeta">Issued ${fmtDate(inv.issuedAt)}${inv.dueDate ? ` · Due ${escapeHtml(inv.dueDate)}` : ''}${inv.paidAt ? ` · Paid ${fmtDate(inv.paidAt)}` : ''}</div>
         ${inv.notes ? `<div class="entryNotes">${escapeHtml(inv.notes)}</div>` : ''}
       </div>

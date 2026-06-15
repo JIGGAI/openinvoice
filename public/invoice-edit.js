@@ -93,8 +93,9 @@ function updateTotal() {
   const selected = state.entries.filter(entry => selectedEntryIds.has(entry.id));
   const shownHours = lineHours(lines) + selected.reduce((sum, entry) => sum + entry.durationMs, 0) / 36e5;
   const billableMs = invoice.type === 'manual' ? 0 : selected.reduce((sum, entry) => noChargeEntryIds.has(entry.id) ? sum : sum + entry.durationMs, 0);
+  const billableHours = lineHours(lines) + billableMs / 36e5;
   const amount = lineTotal(lines) + (billableMs / 36e5) * Number($('hourlyRate').value || 0);
-  $('totalPreview').textContent = `${shownHours.toFixed(2)}h shown · ${fmtMoney(amount)}`;
+  $('totalPreview').textContent = `${shownHours.toFixed(2)}h shown · ${billableHours.toFixed(2)}h charged · ${fmtMoney(amount)}`;
 }
 
 function render() {

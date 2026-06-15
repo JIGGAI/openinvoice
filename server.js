@@ -106,12 +106,11 @@ function invoiceNumber(db) {
 function invoiceTotals(entries, hourlyRate = 0, options = {}) {
   const noChargeEntryIds = new Set((options.noChargeEntryIds || []).map(String));
   const lineTotals = manualInvoiceTotals(options.lineItems || []);
-  const totalMs = entries.reduce((sum, e) => sum + durationMs(e), 0);
   const billableMs = entries.reduce((sum, e) => noChargeEntryIds.has(e.id) ? sum : sum + durationMs(e), 0);
-  const totalHours = totalMs / 36e5;
+  const billableHours = billableMs / 36e5;
   return {
-    totalMs: totalMs + lineTotals.totalMs,
-    totalHours: totalHours + lineTotals.totalHours,
+    totalMs: billableMs + lineTotals.totalMs,
+    totalHours: billableHours + lineTotals.totalHours,
     billableMs,
     totalAmount: (billableMs / 36e5) * Number(hourlyRate || 0) + lineTotals.totalAmount
   };
@@ -629,7 +628,7 @@ function invoiceHtmlDocument(invoice, entries) {
       </div>
       <div>
         <h3 class="blockTitle">Invoice Summary</h3>
-        <div class="muted">${Number(invoice.totalHours || 0).toFixed(2)} hours shown</div>
+        <div class="muted">${Number(invoice.totalHours || 0).toFixed(2)} billable hours</div>
         <div class="muted">${rows.length} line${rows.length === 1 ? '' : 's'}</div>
       </div>
     </section>
@@ -653,7 +652,7 @@ function invoiceHtmlDocument(invoice, entries) {
         ${invoice.notes ? escapeHtml(invoice.notes).replaceAll('\n', '<br>') : '<span class="muted">Thank you for your business.</span>'}
       </div>
       <div class="totals">
-        <div class="totalRow"><span>Total hours</span><strong>${Number(invoice.totalHours || 0).toFixed(2)}</strong></div>
+        <div class="totalRow"><span>Billable hours</span><strong>${Number(invoice.totalHours || 0).toFixed(2)}</strong></div>
         <div class="totalRow grand"><span>Total due</span><strong>${formatMoney(invoice.totalAmount)}</strong></div>
       </div>
     </section>
