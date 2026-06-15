@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Edit Invoice · Customer Time Tracker</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="singlePage">
+  <main class="app invoiceEditApp">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Edit invoice</p>
+        <h2 id="invoiceTitle">Invoice</h2>
+      </div>
+      <div class="actions compact">
+        <a class="button ghost subtle" href="/#invoices">Back to invoices</a>
+        <a id="openInvoice" class="button ghost subtle" href="#" target="_blank" rel="noopener">Open invoice</a>
+        <a id="pdfInvoice" class="button ghost subtle" href="#">Export PDF</a>
+      </div>
+    </header>
+
+    <section class="panel stack">
+      <div class="sectionHead wrap">
+        <div>
+          <h3>Invoice details</h3>
+          <p class="muted noMargin">Branding appears on the printable invoice.</p>
+        </div>
+        <span id="invoiceMeta" class="muted"></span>
+      </div>
+      <div class="invoiceComposer editInvoiceDetails">
+        <label>Company name <input id="companyName" placeholder="Your Company LLC" /></label>
+        <label>Logo URL <input id="logoUrl" type="url" placeholder="https://example.com/logo.png" /></label>
+        <label>Due date <input id="dueDate" type="date" /></label>
+      </div>
+      <label>Company address
+        <textarea id="companyAddress" rows="3" placeholder="123 Main St&#10;City, ST 00000"></textarea>
+      </label>
+      <label>Invoice notes
+        <textarea id="notes" rows="3"></textarea>
+      </label>
+      <label id="rateField">Hourly rate
+        <input id="hourlyRate" type="number" min="0" step="0.01" />
+      </label>
+    </section>
+
+    <section class="panel stack">
+      <div class="sectionHead wrap">
+        <div>
+          <h3>Manual lines</h3>
+          <p class="muted noMargin">Use dated fixed-fee, retainer, adjustment, or package lines.</p>
+        </div>
+        <button id="addLine" type="button" class="ghost subtle">Add line</button>
+      </div>
+      <div id="lineItems" class="manualLines"></div>
+    </section>
+
+    <section id="entriesPanel" class="panel stack">
+      <div>
+        <h3>Time entries</h3>
+        <p class="muted noMargin">Unchecked rows are removed from the invoice and become unbilled. Checked no-charge rows stay visible but add $0.</p>
+      </div>
+      <div id="entryList" class="entries selectableEntries"></div>
+    </section>
+
+    <section class="panel">
+      <div class="sectionHead wrap">
+        <strong id="totalPreview">0.00h · $0.00</strong>
+        <button id="saveInvoice" type="button">Save invoice</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/invoice-edit.js" type="module"></script>
+</body>
+</html>

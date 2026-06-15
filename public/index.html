@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Customer Time Tracker</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">TT</div>
+      <div>
+        <p class="eyebrow">Local app</p>
+        <h1>Time Tracker</h1>
+      </div>
+    </div>
+    <nav class="nav">
+      <button class="navBtn active" data-view="track">Track</button>
+      <button class="navBtn" data-view="projects">Customers & Projects</button>
+      <button class="navBtn" data-view="reports">Reports</button>
+      <button class="navBtn" data-view="invoices">Invoices</button>
+      <button class="navBtn" data-view="company">Company</button>
+    </nav>
+    <a class="button ghost wide" href="/api/export.csv">Export CSV</a>
+    <p class="sidebarNote">Data stays local in <code>data/time-tracker.json</code>.</p>
+  </aside>
+
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow" id="viewEyebrow">Track time</p>
+        <h2 id="viewTitle">Customer project timer</h2>
+      </div>
+      <div id="topStats" class="topStats"></div>
+    </header>
+
+    <section id="trackView" class="view active">
+      <section class="panel hero">
+        <div>
+          <p class="eyebrow">Active timer</p>
+          <h3 id="timerLabel">No timer running</h3>
+          <div id="timerClock" class="clock">00:00:00</div>
+        </div>
+        <form id="timerForm" class="stack">
+          <label>Project / sub-project
+            <select id="timerProject" required></select>
+          </label>
+          <label>Start time
+            <input id="timerStart" type="datetime-local" />
+          </label>
+          <label>Notes
+            <textarea id="timerNotes" rows="3" placeholder="What are you working on?"></textarea>
+          </label>
+          <div class="actions">
+            <button id="startBtn" type="submit">Start timer</button>
+            <button id="stopBtn" class="danger" type="button">Stop & save</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="grid two">
+        <form id="manualForm" class="panel stack" novalidate>
+          <h3 id="manualTitle">Manual entry</h3>
+          <label>Project / sub-project <select id="manualProject" required></select></label>
+          <label>Start <input id="manualStart" type="datetime-local" required /></label>
+          <label>End <input id="manualEnd" type="datetime-local" /></label>
+          <label>Hours <input id="manualHours" type="number" min="0" step="0.01" placeholder="1.5" /></label>
+          <label>Notes <textarea id="manualNotes" rows="3"></textarea></label>
+          <div class="actions"><button id="manualSubmit" type="submit">Save entry</button><button id="manualCancel" class="ghost subtle" type="button" hidden>Cancel edit</button></div>
+        </form>
+
+        <section class="panel">
+          <div class="sectionHead">
+            <h3>Quick summary</h3>
+            <select id="rangeSelect">
+              <option value="today">Today</option>
+              <option value="week" selected>This week</option>
+              <option value="month">This month</option>
+              <option value="all">All time</option>
+            </select>
+          </div>
+          <div id="summary" class="summary"></div>
+        </section>
+      </section>
+
+      <section class="panel">
+        <div class="sectionHead">
+          <h3>Recent entries</h3>
+          <span id="entryCount" class="muted"></span>
+        </div>
+        <div id="entries" class="entries"></div>
+      </section>
+    </section>
+
+    <section id="projectsView" class="view">
+      <section class="grid two">
+        <form id="customerForm" class="panel stack">
+          <h3>Add customer</h3>
+          <label>Customer name <input id="customerName" required placeholder="Acme Co" /></label>
+          <button type="submit">Add customer</button>
+        </form>
+
+        <form id="projectForm" class="panel stack">
+          <h3>Add project or sub-project</h3>
+          <label>Customer <select id="projectCustomer" required></select></label>
+          <label>Parent project
+            <select id="parentProject"><option value="">Top-level project</option></select>
+          </label>
+          <label>Name <input id="projectName" required placeholder="Website redesign / QA / Retainer" /></label>
+          <label>Color <input id="projectColor" type="color" value="#4f46e5" /></label>
+          <button type="submit">Add project</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="sectionHead">
+          <h3>Customer project tree</h3>
+          <span id="projectCount" class="muted"></span>
+        </div>
+        <div id="projectTree" class="tree"></div>
+      </section>
+    </section>
+
+    <section id="reportsView" class="view">
+      <section class="panel stack">
+        <div class="sectionHead wrap">
+          <div>
+            <h3>Reports</h3>
+            <p class="muted noMargin">Filter by customer, project, and date range.</p>
+          </div>
+          <div class="filters">
+            <label>Customer <select id="reportCustomer"></select></label>
+            <label>Project <select id="reportProject"></select></label>
+            <label>Status
+              <select id="reportBilling">
+                <option value="all">All</option>
+                <option value="unbilled">Unbilled</option>
+                <option value="billed">Billed</option>
+                <option value="paid">Paid</option>
+              </select>
+            </label>
+            <label>From <input id="reportFrom" type="date" /></label>
+            <label>To <input id="reportTo" type="date" /></label>
+          </div>
+        </div>
+        <div id="reportTotals" class="reportCards"></div>
+        <div class="grid two">
+          <div>
+            <h4>By customer</h4>
+            <div id="reportByCustomer" class="summary"></div>
+          </div>
+          <div>
+            <h4>By project / sub-project</h4>
+            <div id="reportByProject" class="summary"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="sectionHead">
+          <h3>Report entries</h3>
+          <span id="reportEntryCount" class="muted"></span>
+        </div>
+        <div id="reportEntries" class="entries"></div>
+      </section>
+    </section>
+
+    <section id="invoicesView" class="view">
+      <section class="panel stack">
+        <div>
+          <h3>Create blank / manual invoice</h3>
+          <p class="muted noMargin">Use this for fixed-price work, retainers, adjustments, or anything not tied to tracked time.</p>
+        </div>
+        <div class="invoiceComposer manualInvoiceComposer">
+          <label>Customer <select id="manualInvoiceCustomer" required></select></label>
+          <label>Due date <input id="manualInvoiceDueDate" type="date" /></label>
+          <label>Notes <textarea id="manualInvoiceNotes" rows="2" placeholder="Payment terms, memo, etc."></textarea></label>
+        </div>
+        <div class="manualLines" id="manualInvoiceLines">
+          <div class="manualLine">
+            <label>Date <input class="manualLineDate" type="date" /></label>
+            <label>Description <input class="manualLineDescription" placeholder="Consulting services" /></label>
+            <label>Hours / Qty <input class="manualLineHours" type="number" min="0" step="0.01" placeholder="1" /></label>
+            <label>Rate <input class="manualLineRate" type="number" min="0" step="0.01" placeholder="150" /></label>
+          </div>
+        </div>
+        <div class="sectionHead wrap">
+          <button id="addManualInvoiceLine" type="button" class="ghost subtle">Add line</button>
+          <div class="invoiceSelection"><strong id="manualInvoiceTotal">0.00h · $0.00</strong><button id="createManualInvoiceBtn" type="button">Create manual invoice</button></div>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <div class="sectionHead wrap">
+          <div>
+            <h3>Create invoice from time entries</h3>
+            <p class="muted noMargin">Filter unbilled entries, bulk select them, then generate an invoice.</p>
+          </div>
+          <div class="filters invoiceFilters">
+            <label>Customer <select id="invoiceCustomer"></select></label>
+            <label>Project <select id="invoiceProject"></select></label>
+            <label>From <input id="invoiceFrom" type="date" /></label>
+            <label>To <input id="invoiceTo" type="date" /></label>
+          </div>
+        </div>
+        <div class="invoiceComposer">
+          <label>Hourly rate <input id="invoiceRate" type="number" min="0" step="0.01" placeholder="150" /></label>
+          <label>Due date <input id="invoiceDueDate" type="date" /></label>
+          <label>Invoice notes <textarea id="invoiceNotes" rows="2" placeholder="Payment terms, thank you note, etc."></textarea></label>
+        </div>
+        <div class="invoiceComposer includedLineComposer">
+          <label>Fixed line date <input id="invoiceFixedDate" type="date" /></label>
+          <label>Fixed line description <input id="invoiceFixedDescription" placeholder="Project work package" /></label>
+          <label>Qty <input id="invoiceFixedQty" type="number" min="0" step="0.01" placeholder="1" /></label>
+          <label>Amount <input id="invoiceFixedAmount" type="number" min="0" step="0.01" placeholder="1500" /></label>
+        </div>
+        <div class="sectionHead wrap">
+          <div class="actions compact"><button id="selectAllInvoiceEntries" type="button" class="ghost subtle">Select all visible</button><button id="clearInvoiceEntries" type="button" class="ghost subtle">Clear</button></div>
+          <div class="invoiceSelection"><strong id="invoiceSelectionTotal">0 selected · 0.00h · $0.00</strong><button id="createInvoiceBtn" type="button">Generate invoice</button></div>
+        </div>
+        <div id="invoiceEntryList" class="entries selectableEntries"></div>
+      </section>
+
+      <section class="panel">
+        <div class="sectionHead">
+          <h3>Invoices</h3>
+          <span id="invoiceCount" class="muted"></span>
+        </div>
+        <div id="invoiceList" class="entries"></div>
+      </section>
+
+      <section id="editInvoicePanel" class="panel stack" hidden>
+        <div class="sectionHead wrap">
+          <div>
+            <h3 id="editInvoiceTitle">Edit invoice</h3>
+            <p class="muted noMargin">Update manual lines, selected time entries, and no-charge support rows.</p>
+          </div>
+          <button id="cancelEditInvoice" type="button" class="ghost subtle">Cancel edit</button>
+        </div>
+        <div class="invoiceComposer">
+          <label>Hourly rate <input id="editInvoiceRate" type="number" min="0" step="0.01" /></label>
+          <label>Due date <input id="editInvoiceDueDate" type="date" /></label>
+          <label>Invoice notes <textarea id="editInvoiceNotes" rows="2"></textarea></label>
+        </div>
+        <div>
+          <h4>Manual lines</h4>
+          <div class="manualLines" id="editInvoiceLines"></div>
+          <button id="addEditInvoiceLine" type="button" class="ghost subtle">Add line</button>
+        </div>
+        <div id="editInvoiceEntriesBlock">
+          <h4>Time entries</h4>
+          <div id="editInvoiceEntryList" class="entries selectableEntries"></div>
+        </div>
+        <div class="sectionHead wrap">
+          <strong id="editInvoiceTotal">0.00h · $0.00</strong>
+          <button id="saveEditInvoice" type="button">Save invoice</button>
+        </div>
+      </section>
+    </section>
+
+    <section id="companyView" class="view">
+      <form id="companyForm" class="panel stack">
+        <div>
+          <h3>Company information</h3>
+          <p class="muted noMargin">Saved company details populate new invoices automatically.</p>
+        </div>
+        <div class="invoiceComposer editInvoiceDetails">
+          <label>Company name <input id="companyName" placeholder="Your Company LLC" /></label>
+          <label>Logo photo <input id="companyLogoFile" type="file" accept="image/*" /></label>
+        </div>
+        <label>Company address
+          <textarea id="companyAddress" rows="4" placeholder="123 Main St&#10;City, ST 00000"></textarea>
+        </label>
+        <input id="companyLogoUrl" type="hidden" />
+        <div class="companyPreview">
+          <img id="companyLogoPreview" alt="" hidden />
+          <div>
+            <strong id="companyPreviewName">No company saved</strong>
+            <p id="companyPreviewAddress" class="muted noMargin"></p>
+          </div>
+        </div>
+        <button type="submit">Save company info</button>
+      </form>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
