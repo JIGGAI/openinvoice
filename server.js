@@ -11,6 +11,7 @@ const publicDir = path.join(__dirname, 'public');
 const dataDir = path.join(__dirname, 'data');
 const dbPath = path.join(dataDir, 'time-tracker.json');
 const pdfCacheDir = path.join(dataDir, 'pdf-cache');
+const uploadDir = path.join(dataDir, 'uploads');
 const port = Number(process.env.PORT || 8787);
 const chromiumBin = process.env.CHROMIUM_PATH || '/snap/bin/chromium';
 const execFileAsync = promisify(execFile);
@@ -70,7 +71,10 @@ const bad = (res, message, status = 400) => json(res, status, { error: message }
 
 async function bodyJson(req) {
   let raw = '';
-  for await (const chunk of req) raw += chunk;
+  for await (const chunk of req) {
+    raw += chunk;
+    if (Buffer.byteLength(raw) > 8 * 1024 * 1024) throw new Error('Request body too large');
+  }
   if (!raw.trim()) return {};
   try { return JSON.parse(raw); } catch { throw new Error('Invalid JSON'); }
 }
@@ -136,13 +140,44 @@ function companyInfo(payload = {}) {
   };
 }
 
+function firstFilled(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
 function invoiceBranding(payload = {}, db = emptyDb()) {
   const company = companyInfo(db.company || {});
   return {
-    logoUrl: String(payload.logoUrl ?? company.logoUrl ?? '').trim(),
-    companyName: String(payload.companyName ?? company.companyName ?? '').trim(),
-    companyAddress: String(payload.companyAddress ?? company.companyAddress ?? '').trim()
+    logoUrl: firstFilled(payload.logoUrl, company.logoUrl),
+    companyName: firstFilled(payload.companyName, company.companyName),
+    companyAddress: firstFilled(payload.companyAddress, company.companyAddress)
   };
+}
+
+async function persistLogoUrl(value = '') {
+  const logoUrl = String(value || '').trim();
+  if (!logoUrl.startsWith('data:image/')) return logoUrl;
+  const match = logoUrl.match(/^data:(image\/(?:png|jpeg|jpg|gif|webp|svg\+xml));base64,(.+)$/);
+  if (!match) throw new Error('Logo must be a PNG, JPEG, GIF, WebP, or SVG image');
+  const [, mime, encoded] = match;
+  const buffer = Buffer.from(encoded, 'base64');
+  if (!buffer.length) throw new Error('Logo image is empty');
+  if (buffer.length > 3 * 1024 * 1024) throw new Error('Logo image must be under 3 MB');
+  const ext = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg'
+  }[mime];
+  await fs.mkdir(uploadDir, { recursive: true });
+  const filename = `company-logo-${Date.now()}.${ext}`;
+  await fs.writeFile(path.join(uploadDir, filename), buffer);
+  return `/uploads/${filename}`;
 }
 
 function setInvoiceEntriesPaidState(db, invoice, status, paidAt) {
@@ -186,6 +221,7 @@ function enrich(db) {
         : invoiceTotals(invoiceEntries, inv.hourlyRate, { noChargeEntryIds: inv.noChargeEntryIds || [], lineItems: inv.lineItems || [] });
       return {
         ...inv,
+        ...invoiceBranding(inv, db),
         type: inv.type || 'time',
         entryIds: inv.entryIds || [],
         noChargeEntryIds: inv.noChargeEntryIds || [],
@@ -654,16 +690,24 @@ function toCsv(db) {
 async function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
-  const filePath = path.normalize(path.join(publicDir, pathname));
-  if (!filePath.startsWith(publicDir)) return bad(res, 'Invalid path', 403);
+  const servingUpload = pathname.startsWith('/uploads/');
+  const rootDir = servingUpload ? uploadDir : publicDir;
+  const relativePath = servingUpload ? pathname.replace(/^\/uploads\//, '') : pathname;
+  const filePath = path.normalize(path.join(rootDir, relativePath));
+  if (!filePath.startsWith(rootDir)) return bad(res, 'Invalid path', 403);
   try {
     const content = await fs.readFile(filePath);
     const ext = path.extname(filePath);
     const type = ext === '.html' ? 'text/html; charset=utf-8'
       : ext === '.css' ? 'text/css; charset=utf-8'
       : ext === '.js' ? 'application/javascript; charset=utf-8'
+      : ext === '.png' ? 'image/png'
+      : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+      : ext === '.gif' ? 'image/gif'
+      : ext === '.webp' ? 'image/webp'
+      : ext === '.svg' ? 'image/svg+xml'
       : 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': type });
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': servingUpload ? 'public, max-age=31536000, immutable' : 'no-cache' });
     res.end(content);
   } catch {
     notFound(res);
@@ -689,7 +733,10 @@ async function api(req, res) {
   if (!['GET', 'HEAD'].includes(method)) payload = await bodyJson(req);
 
   if (method === 'PATCH' && route === '/api/company') {
-    db.company = companyInfo(payload);
+    db.company = companyInfo({
+      ...payload,
+      logoUrl: await persistLogoUrl(payload.logoUrl)
+    });
     await writeDb(db);
     return json(res, 200, db.company);
   }
