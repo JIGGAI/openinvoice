@@ -3,12 +3,17 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, 'public');
 const dataDir = path.join(__dirname, 'data');
 const dbPath = path.join(dataDir, 'time-tracker.json');
+const pdfCacheDir = path.join(dataDir, 'pdf-cache');
 const port = Number(process.env.PORT || 8787);
+const chromiumBin = process.env.CHROMIUM_PATH || '/snap/bin/chromium';
+const execFileAsync = promisify(execFile);
 
 const emptyDb = () => ({
   company: {
@@ -217,6 +222,14 @@ function csvEscape(value) {
   return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[ch]));
+}
+
+function formatMoney(value) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
+
 function formatEastern(value, options = {}) {
   if (!value) return '';
   const date = new Date(value);
@@ -314,6 +327,307 @@ function simpleInvoicePdf(invoice, entries) {
   for (let i = 1; i < offsets.length; i++) pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
   pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`;
   return Buffer.from(pdf);
+}
+
+function invoiceHtmlDocument(invoice, entries) {
+  const rows = invoiceRows(invoice, entries);
+  const companyAddress = invoice.companyAddress
+    ? escapeHtml(invoice.companyAddress).replaceAll('\n', '<br>')
+    : '';
+  const logo = invoice.logoUrl
+    ? `<img class="brandLogo" src="${escapeHtml(invoice.logoUrl)}" alt="">`
+    : '<div class="brandMark">IN</div>';
+  const rowHtml = rows.length ? rows.map(row => {
+    const included = row.rate === 'Included';
+    const rate = included ? '<span class="pill">Included</span>' : formatMoney(row.rate);
+    return `<tr>
+      <td class="date">${escapeHtml(row.date || '')}</td>
+      <td>
+        <strong>${escapeHtml(row.description)}</strong>
+        ${row.notes ? `<div class="lineNotes">${escapeHtml(row.notes)}</div>` : ''}
+      </td>
+      <td class="num">${Number(row.hours || 0).toFixed(2)}</td>
+      <td class="num">${rate}</td>
+      <td class="num amount">${formatMoney(row.amount)}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" class="empty">No invoice lines.</td></tr>';
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(invoice.number)}</title>
+  <style>
+    @page { size: Letter; margin: 0.55in; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #1f2933;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 12px;
+      line-height: 1.45;
+      background: #f3f4f6;
+    }
+    .sheet {
+      width: 8.5in;
+      min-height: 11in;
+      margin: 0 auto;
+      padding: 0.62in;
+      background: white;
+    }
+    .top {
+      display: grid;
+      grid-template-columns: 1fr 250px;
+      gap: 32px;
+      align-items: start;
+      padding-bottom: 28px;
+      border-bottom: 2px solid #102820;
+    }
+    .brand {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .brandLogo {
+      max-width: 132px;
+      max-height: 76px;
+      object-fit: contain;
+      object-position: left top;
+    }
+    .brandMark {
+      width: 58px;
+      height: 58px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: #102820;
+      color: white;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+    .companyName {
+      margin: 0 0 6px;
+      font-size: 18px;
+      font-weight: 850;
+      color: #102820;
+      letter-spacing: 0;
+    }
+    .address, .muted { color: #667085; }
+    .invoiceTitle {
+      margin: 0;
+      color: #102820;
+      font-size: 34px;
+      line-height: 1;
+      text-align: right;
+      letter-spacing: 0;
+    }
+    .invoiceNumber {
+      margin-top: 8px;
+      text-align: right;
+      color: #667085;
+      font-weight: 700;
+    }
+    .meta {
+      margin-top: 18px;
+      display: grid;
+      gap: 7px;
+    }
+    .metaRow {
+      display: grid;
+      grid-template-columns: 86px 1fr;
+      gap: 12px;
+      justify-items: end;
+    }
+    .metaRow span:first-child { color: #667085; }
+    .status {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: ${invoice.status === 'paid' ? '#dcfce7' : '#fef3c7'};
+      color: ${invoice.status === 'paid' ? '#166534' : '#92400e'};
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 0;
+    }
+    .billing {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin: 28px 0 24px;
+    }
+    .blockTitle {
+      margin: 0 0 8px;
+      color: #667085;
+      font-size: 10px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .clientName {
+      font-size: 15px;
+      font-weight: 850;
+      color: #102820;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    th {
+      padding: 10px 10px;
+      color: #f8fafc;
+      background: #102820;
+      text-align: left;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    th:nth-child(1) { width: 86px; }
+    th:nth-child(3) { width: 74px; }
+    th:nth-child(4) { width: 92px; }
+    th:nth-child(5) { width: 100px; }
+    td {
+      padding: 12px 10px;
+      border-bottom: 1px solid #e5e7eb;
+      vertical-align: top;
+    }
+    tbody tr:nth-child(even) td { background: #f9fafb; }
+    .num { text-align: right; white-space: nowrap; }
+    .amount { font-weight: 850; color: #102820; }
+    .date { color: #667085; white-space: nowrap; }
+    .lineNotes { margin-top: 4px; color: #667085; font-size: 10px; }
+    .pill {
+      display: inline-block;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: #eef2f7;
+      color: #475467;
+      font-weight: 800;
+      font-size: 10px;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: 1fr 250px;
+      gap: 32px;
+      margin-top: 24px;
+      align-items: start;
+    }
+    .notes {
+      min-height: 80px;
+      color: #475467;
+    }
+    .totals {
+      padding: 16px;
+      border-radius: 10px;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+    }
+    .totalRow {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 6px 0;
+      color: #475467;
+    }
+    .grand {
+      margin-top: 8px;
+      padding-top: 12px;
+      border-top: 2px solid #102820;
+      color: #102820;
+      font-size: 18px;
+      font-weight: 900;
+    }
+    .screenActions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin: 22px auto 0;
+      width: 8.5in;
+    }
+    .button, button {
+      border: 0;
+      border-radius: 9px;
+      padding: 10px 14px;
+      background: #102820;
+      color: white;
+      font: inherit;
+      font-weight: 800;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    @media print {
+      body { background: white; }
+      .sheet { width: auto; min-height: auto; margin: 0; padding: 0; }
+      .screenActions { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <section class="top">
+      <div class="brand">
+        ${logo}
+        <div>
+          <h1 class="companyName">${escapeHtml(invoice.companyName || 'Company')}</h1>
+          ${companyAddress ? `<div class="address">${companyAddress}</div>` : ''}
+        </div>
+      </div>
+      <div>
+        <h2 class="invoiceTitle">Invoice</h2>
+        <div class="invoiceNumber">${escapeHtml(invoice.number)}</div>
+        <div class="meta">
+          <div class="metaRow"><span>Status</span><strong class="status">${escapeHtml(invoice.status)}</strong></div>
+          <div class="metaRow"><span>Issued</span><strong>${escapeHtml(formatEastern(invoice.issuedAt, { dateOnly: true }))}</strong></div>
+          ${invoice.dueDate ? `<div class="metaRow"><span>Due</span><strong>${escapeHtml(invoice.dueDate)}</strong></div>` : ''}
+          ${invoice.paidAt ? `<div class="metaRow"><span>Paid</span><strong>${escapeHtml(formatEastern(invoice.paidAt, { dateOnly: true }))}</strong></div>` : ''}
+        </div>
+      </div>
+    </section>
+
+    <section class="billing">
+      <div>
+        <h3 class="blockTitle">Bill To</h3>
+        <div class="clientName">${escapeHtml(invoice.customerName)}</div>
+      </div>
+      <div>
+        <h3 class="blockTitle">Invoice Summary</h3>
+        <div class="muted">${Number(invoice.totalHours || 0).toFixed(2)} hours shown</div>
+        <div class="muted">${rows.length} line${rows.length === 1 ? '' : 's'}</div>
+      </div>
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Description</th>
+          <th class="num">Hours</th>
+          <th class="num">Rate</th>
+          <th class="num">Amount</th>
+        </tr>
+      </thead>
+      <tbody>${rowHtml}</tbody>
+    </table>
+
+    <section class="summary">
+      <div class="notes">
+        <h3 class="blockTitle">Notes</h3>
+        ${invoice.notes ? escapeHtml(invoice.notes).replaceAll('\n', '<br>') : '<span class="muted">Thank you for your business.</span>'}
+      </div>
+      <div class="totals">
+        <div class="totalRow"><span>Total hours</span><strong>${Number(invoice.totalHours || 0).toFixed(2)}</strong></div>
+        <div class="totalRow grand"><span>Total due</span><strong>${formatMoney(invoice.totalAmount)}</strong></div>
+      </div>
+    </section>
+  </main>
+  <div class="screenActions">
+    <button onclick="window.print()">Print</button>
+    <a class="button" href="/api/invoices/${escapeHtml(invoice.id)}.pdf">Export PDF</a>
+  </div>
+</body>
+</html>`;
 }
 
 function toCsv(db) {
@@ -668,7 +982,24 @@ async function api(req, res) {
     const invoice = enriched.invoices.find(i => i.id === invoicePdf[1]);
     if (!invoice) return notFound(res);
     const entries = enriched.entries.filter(e => invoice.entryIds.includes(e.id)).sort((a,b) => String(a.startedAt).localeCompare(String(b.startedAt)));
-    const pdf = simpleInvoicePdf(invoice, entries);
+    await fs.mkdir(pdfCacheDir, { recursive: true });
+    const htmlPath = path.join(pdfCacheDir, `${invoice.id}.html`);
+    const pdfPath = path.join(pdfCacheDir, `${invoice.id}.pdf`);
+    const profilePath = path.join(pdfCacheDir, 'chromium-profile');
+    await fs.mkdir(profilePath, { recursive: true });
+    await fs.writeFile(htmlPath, invoiceHtmlDocument(invoice, entries));
+    await execFileAsync(chromiumBin, [
+      '--headless',
+      '--no-sandbox',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--no-pdf-header-footer',
+      `--user-data-dir=${profilePath}`,
+      `--print-to-pdf=${pdfPath}`,
+      `file://${htmlPath}`
+    ], { timeout: 30000, maxBuffer: 1024 * 1024 });
+    await fs.access(pdfPath);
+    const pdf = await fs.readFile(pdfPath);
     res.writeHead(200, {
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${invoice.number}.pdf"`,
@@ -679,26 +1010,12 @@ async function api(req, res) {
 
   const invoiceHtml = route.match(/^\/api\/invoices\/([^/]+)\.html$/);
   if (method === 'GET' && invoiceHtml) {
-    const invoice = enrich(db).invoices.find(i => i.id === invoiceHtml[1]);
+    const enriched = enrich(db);
+    const invoice = enriched.invoices.find(i => i.id === invoiceHtml[1]);
     if (!invoice) return notFound(res);
-    const entries = enrich(db).entries.filter(e => invoice.entryIds.includes(e.id)).sort((a,b) => String(a.startedAt).localeCompare(String(b.startedAt)));
-    const esc = (v) => String(v ?? '').replace(/[&<>'"]/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[ch]));
-    const manualRows = (invoice.lineItems || []).map(item => `<tr><td>${esc(item.date || '')}</td><td>${esc(item.description)}</td><td></td><td class="num">${Number(item.hours || 0).toFixed(2)}</td><td class="num">$${Number(item.rate || 0).toFixed(2)}</td><td class="num">$${(Number(item.hours || 0) * Number(item.rate || 0)).toFixed(2)}</td></tr>`).join('');
-    const noChargeEntryIds = new Set((invoice.noChargeEntryIds || []).map(String));
-    const timeRows = entries.map(e => {
-      const noCharge = noChargeEntryIds.has(e.id);
-      const amount = noCharge ? 0 : (e.durationMs / 36e5) * Number(invoice.hourlyRate || 0);
-      const rate = noCharge ? '<span class="included">Included</span>' : `$${Number(invoice.hourlyRate || 0).toFixed(2)}`;
-      return `<tr><td>${esc(formatEastern(e.startedAt, { dateOnly: true }))}</td><td>${esc(e.projectDisplayName || e.projectName)}</td><td>${esc(e.notes || '')}${noCharge ? '<div class="muted">Included / no charge</div>' : ''}</td><td class="num">${(e.durationMs / 36e5).toFixed(2)}</td><td class="num">${rate}</td><td class="num">$${amount.toFixed(2)}</td></tr>`;
-    }).join('');
-    const rows = invoice.type === 'manual' ? manualRows : `${manualRows}${timeRows}`;
+    const entries = enriched.entries.filter(e => invoice.entryIds.includes(e.id)).sort((a,b) => String(a.startedAt).localeCompare(String(b.startedAt)));
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    const companyAddress = invoice.companyAddress ? `<div class="companyAddress">${esc(invoice.companyAddress).replaceAll('\n', '<br>')}</div>` : '';
-    const logo = invoice.logoUrl ? `<img class="invoiceLogo" src="${esc(invoice.logoUrl)}" alt="">` : '';
-    const company = invoice.companyName || invoice.companyAddress || invoice.logoUrl
-      ? `<section class="companyBlock">${logo}<div>${invoice.companyName ? `<strong>${esc(invoice.companyName)}</strong>` : ''}${companyAddress}</div></section>`
-      : '';
-    return res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(invoice.number)}</title><style>body{font-family:system-ui,sans-serif;margin:40px;color:#1f2933}header{display:flex;justify-content:space-between;gap:20px;margin-bottom:30px}.muted{color:#6b7280}.badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#eef2ff}.included{display:inline-block;padding:3px 8px;border-radius:999px;background:#f3f4f6;color:#4b5563;font-weight:700}.companyBlock{display:flex;gap:14px;align-items:flex-start;margin-bottom:20px}.invoiceLogo{max-width:150px;max-height:80px;object-fit:contain}.companyAddress{white-space:normal;color:#4b5563;margin-top:4px}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{border-bottom:1px solid #ddd;padding:10px;text-align:left;vertical-align:top}.num{text-align:right}.total{font-size:1.3rem;font-weight:800}.buttonRow{display:flex;gap:10px;margin-top:24px}button,a.button{padding:10px 14px;border:0;border-radius:10px;background:#2f6f4e;color:white;text-decoration:none;font:inherit}@media print{.buttonRow{display:none}}</style></head><body>${company}<header><div><p class="muted">Invoice</p><h1>${esc(invoice.number)}</h1><p><strong>${esc(invoice.customerName)}</strong></p></div><div><p>Status: <span class="badge">${esc(invoice.status)}</span></p><p>Issued: ${esc(formatEastern(invoice.issuedAt, { dateOnly: true }))}</p>${invoice.dueDate ? `<p>Due: ${esc(invoice.dueDate)}</p>` : ''}${invoice.paidAt ? `<p>Paid: ${esc(formatEastern(invoice.paidAt, { dateOnly: true }))}</p>` : ''}</div></header><table><thead><tr><th>Date</th><th>Project</th><th>Notes</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3"></td><td class="num total">${invoice.totalHours.toFixed(2)}</td><td></td><td class="num total">$${invoice.totalAmount.toFixed(2)}</td></tr></tfoot></table>${invoice.notes ? `<p><strong>Notes:</strong> ${esc(invoice.notes)}</p>` : ''}<div class="buttonRow"><button onclick="window.print()">Print</button><a class="button" href="/api/invoices/${invoice.id}.pdf">Export PDF</a></div></body></html>`);
+    return res.end(invoiceHtmlDocument(invoice, entries));
   }
 
   const entryDelete = route.match(/^\/api\/entries\/([^/]+)$/);

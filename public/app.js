@@ -2,11 +2,8 @@ let state = null;
 let tick = null;
 let currentView = 'track';
 let editingEntryId = null;
-let editingInvoiceId = null;
 const selectedInvoiceEntryIds = new Set();
 const noChargeInvoiceEntryIds = new Set();
-const editInvoiceEntryIds = new Set();
-const editNoChargeEntryIds = new Set();
 
 const $ = (id) => document.getElementById(id);
 const money = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -332,7 +329,6 @@ function renderInvoices() {
         <button class="ghost subtle dangerText" data-invoice-delete="${inv.id}">Delete</button>
       </div>
     </article>`).join('') : '<p class="muted">No invoices yet. Select unbilled entries above to create one.</p>';
-  renderEditInvoicePanel();
 }
 
 function updateInvoiceSelectionTotal() {
@@ -375,91 +371,12 @@ function invoiceLines(containerId) {
 }
 
 function manualInvoiceLines() { return invoiceLines('manualInvoiceLines'); }
-function editInvoiceLines() { return invoiceLines('editInvoiceLines'); }
 
 function updateManualInvoiceTotal() {
   const lines = manualInvoiceLines();
   const totalHours = lines.reduce((sum, item) => sum + Number(item.hours || 0), 0);
   const totalAmount = lines.reduce((sum, item) => sum + Number(item.hours || 0) * Number(item.rate || 0), 0);
   $('manualInvoiceTotal').textContent = `${totalHours.toFixed(2)}h · ${fmtMoney(totalAmount)}`;
-}
-
-function invoiceLineTotal(lines) {
-  return lines.reduce((sum, item) => sum + Number(item.hours || 0) * Number(item.rate || 0), 0);
-}
-
-function invoiceLineHours(lines) {
-  return lines.reduce((sum, item) => sum + Number(item.hours || 0), 0);
-}
-
-function beginEditInvoice(id) {
-  const invoice = state.invoices.find(inv => inv.id === id);
-  if (!invoice) return toast('Invoice not found');
-  editingInvoiceId = id;
-  editInvoiceEntryIds.clear();
-  editNoChargeEntryIds.clear();
-  (invoice.entryIds || []).forEach(entryId => editInvoiceEntryIds.add(entryId));
-  (invoice.noChargeEntryIds || []).forEach(entryId => editNoChargeEntryIds.add(entryId));
-  renderEditInvoicePanel();
-  $('editInvoicePanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-function renderEditInvoicePanel() {
-  const invoice = state.invoices.find(inv => inv.id === editingInvoiceId);
-  const panel = $('editInvoicePanel');
-  if (!invoice) {
-    panel.hidden = true;
-    return;
-  }
-
-  panel.hidden = false;
-  $('editInvoiceTitle').textContent = `Edit ${invoice.number}`;
-  $('editInvoiceRate').value = Number(invoice.hourlyRate || 0) || '';
-  $('editInvoiceRate').disabled = invoice.type === 'manual';
-  $('editInvoiceDueDate').value = invoice.dueDate || '';
-  $('editInvoiceNotes').value = invoice.notes || '';
-  $('editInvoiceLines').innerHTML = (invoice.lineItems || []).length
-    ? invoice.lineItems.map(item => manualInvoiceLineTemplate(item)).join('')
-    : manualInvoiceLineTemplate();
-
-  const isManual = invoice.type === 'manual';
-  $('editInvoiceEntriesBlock').hidden = isManual;
-  if (!isManual) {
-    for (const id of [...editNoChargeEntryIds]) {
-      if (!editInvoiceEntryIds.has(id)) editNoChargeEntryIds.delete(id);
-    }
-    const candidates = state.entries
-      .filter(e => {
-        const project = projectById(e.projectId);
-        return project?.customerId === invoice.customerId && (!e.billed || editInvoiceEntryIds.has(e.id));
-      })
-      .sort((a,b) => String(b.startedAt).localeCompare(String(a.startedAt)));
-    $('editInvoiceEntryList').innerHTML = candidates.length ? candidates.map(e => `
-      <article class="entry selectable ${editInvoiceEntryIds.has(e.id) ? 'selected' : ''}">
-        <input type="checkbox" data-edit-invoice-entry="${e.id}" ${editInvoiceEntryIds.has(e.id) ? 'checked' : ''} aria-label="Keep entry on invoice" />
-        <div>
-          <strong>${escapeHtml(e.customerName)} / ${escapeHtml(e.projectDisplayName || e.projectName)}</strong>
-          <div class="entryMeta">${new Date(e.startedAt).toLocaleString()} · ${fmtHours(e.durationMs)} · ${editInvoiceEntryIds.has(e.id) ? 'On invoice' : 'Unbilled'}</div>
-          ${e.notes ? `<div class="entryNotes">${escapeHtml(e.notes)}</div>` : ''}
-        </div>
-        <label class="includedToggle">
-          <input type="checkbox" data-edit-no-charge-entry="${e.id}" ${editNoChargeEntryIds.has(e.id) ? 'checked' : ''} ${editInvoiceEntryIds.has(e.id) ? '' : 'disabled'} />
-          Included / no charge
-        </label>
-      </article>`).join('') : '<p class="muted">No eligible time entries for this customer.</p>';
-  }
-  updateEditInvoiceTotal();
-}
-
-function updateEditInvoiceTotal() {
-  const invoice = state.invoices.find(inv => inv.id === editingInvoiceId);
-  if (!invoice) return;
-  const lines = editInvoiceLines();
-  const selected = state.entries.filter(e => editInvoiceEntryIds.has(e.id));
-  const billableMs = invoice.type === 'manual' ? 0 : selectedTimeTotal(selected, editNoChargeEntryIds);
-  const totalHours = invoiceLineHours(lines) + selected.reduce((sum, e) => sum + e.durationMs, 0) / 36e5;
-  const totalAmount = invoiceLineTotal(lines) + (billableMs / 36e5) * Number($('editInvoiceRate').value || 0);
-  $('editInvoiceTotal').textContent = `${totalHours.toFixed(2)}h shown · ${fmtMoney(totalAmount)}`;
 }
 
 function resetManualInvoiceForm() {
@@ -495,8 +412,8 @@ function showView(view) {
     track: ['Track time', 'Customer project timer'],
     projects: ['Organize work', 'Customers, projects & sub-projects'],
     reports: ['Review work', 'Time reports'],
-    invoices: ['Bill work', 'Invoices & payment tracking']
-    ,company: ['Company profile', 'Invoice company settings']
+    invoices: ['Bill work', 'Invoices & payment tracking'],
+    company: ['Company profile', 'Invoice company settings']
   };
   $('viewEyebrow').textContent = titles[view][0];
   $('viewTitle').textContent = titles[view][1];
@@ -661,15 +578,12 @@ $('createManualInvoiceBtn').addEventListener('click', async () => {
   }
 });
 $('invoiceList').addEventListener('click', async (e) => {
-  const editInvoiceId = e.target?.dataset?.invoiceEdit;
-  if (editInvoiceId) return beginEditInvoice(editInvoiceId);
   const deleteInvoiceId = e.target?.dataset?.invoiceDelete;
   if (deleteInvoiceId) {
     const invoice = state.invoices.find(inv => inv.id === deleteInvoiceId);
     if (!invoice) return toast('Invoice not found');
     if (!confirm(`Delete invoice ${invoice.number}? Its time entries will become unbilled again.`)) return;
     await api(`/api/invoices/${deleteInvoiceId}`, { method: 'DELETE' });
-    if (editingInvoiceId === deleteInvoiceId) editingInvoiceId = null;
     toast('Invoice deleted');
     await load();
     return;
@@ -709,70 +623,6 @@ $('companyForm').addEventListener('submit', async (e) => {
   await load();
 });
 
-$('cancelEditInvoice').addEventListener('click', () => {
-  editingInvoiceId = null;
-  editInvoiceEntryIds.clear();
-  editNoChargeEntryIds.clear();
-  renderEditInvoicePanel();
-});
-$('addEditInvoiceLine').addEventListener('click', () => {
-  $('editInvoiceLines').insertAdjacentHTML('beforeend', manualInvoiceLineTemplate());
-  updateEditInvoiceTotal();
-});
-$('editInvoiceLines').addEventListener('input', updateEditInvoiceTotal);
-$('editInvoiceLines').addEventListener('click', (e) => {
-  if (!e.target?.classList?.contains('removeManualLine')) return;
-  const lines = document.querySelectorAll('#editInvoiceLines .manualLine');
-  if (lines.length <= 1) return toast('Keep at least one line editor');
-  e.target.closest('.manualLine')?.remove();
-  updateEditInvoiceTotal();
-});
-$('editInvoiceRate').addEventListener('input', updateEditInvoiceTotal);
-$('editInvoiceEntryList').addEventListener('change', (e) => {
-  const id = e.target?.dataset?.editInvoiceEntry;
-  const noChargeId = e.target?.dataset?.editNoChargeEntry;
-  if (id) {
-    if (e.target.checked) editInvoiceEntryIds.add(id); else {
-      editInvoiceEntryIds.delete(id);
-      editNoChargeEntryIds.delete(id);
-    }
-  } else if (noChargeId) {
-    if (e.target.checked) editNoChargeEntryIds.add(noChargeId); else editNoChargeEntryIds.delete(noChargeId);
-  } else {
-    return;
-  }
-  const row = e.target.closest('.selectable');
-  if (row && id) {
-    row.classList.toggle('selected', e.target.checked);
-    const noChargeToggle = row.querySelector('[data-edit-no-charge-entry]');
-    if (noChargeToggle) {
-      noChargeToggle.disabled = !e.target.checked;
-      if (!e.target.checked) noChargeToggle.checked = false;
-    }
-  }
-  updateEditInvoiceTotal();
-});
-$('saveEditInvoice').addEventListener('click', async () => {
-  const invoice = state.invoices.find(inv => inv.id === editingInvoiceId);
-  if (!invoice) return toast('Invoice not found');
-  try {
-    await api(`/api/invoices/${invoice.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        hourlyRate: $('editInvoiceRate').value,
-        dueDate: $('editInvoiceDueDate').value,
-        notes: $('editInvoiceNotes').value,
-        lineItems: editInvoiceLines(),
-        entryIds: invoice.type === 'manual' ? undefined : [...editInvoiceEntryIds],
-        noChargeEntryIds: invoice.type === 'manual' ? undefined : [...editNoChargeEntryIds]
-      })
-    });
-    toast('Invoice updated');
-    await load();
-  } catch (err) {
-    toast(err.message || 'Could not update invoice');
-  }
-});
 $('entries').addEventListener('click', async (e) => {
   const editId = e.target?.dataset?.edit;
   if (editId) return editEntry(editId);
